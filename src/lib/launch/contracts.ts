@@ -2,14 +2,14 @@ import type { NetworkId } from "@/lib/near/types";
 
 /**
  * Spike notes (2026-09-23):
- * - Jump Token Laboratory (`laboratory.jumpfinance.near`) is a UI deployer, not a
- *   documented create_token ABI. Historical deploys cost tens of NEAR.
- * - Jump AMM on testnet is `jump_amm.testnet` and exposes Ref-style
- *   `add_simple_pool` / `get_number_of_pools` (22k+ pools).
- * - No public Jump AMM account was found on mainnet. JUMP trades already
- *   route through `v2.ref-finance.near`.
  * - Official factory `token.primitives.near` does not exist on mainnet.
  *   `token.primitives.testnet` does. Launch MVP therefore runs on testnet.
+ * - Pool seed uses Ref Finance `ref-finance-101.testnet` (SDK address) with
+ *   `wrap.testnet`. Same ABI as mainnet `v2.ref-finance.near`.
+ * - testnet.ref.finance / its indexer often hang. We create pools on-chain and
+ *   link NearBlocks, not the Ref UI.
+ * - Jump AMM (`jump_amm.testnet`) is the same Ref-style ABI but has no reliable
+ *   mainnet twin.
  */
 
 export type LaunchContracts = {
@@ -35,18 +35,18 @@ export const CONTRACTS: Record<NetworkId, LaunchContracts> = {
   testnet: {
     factory: "token.primitives.testnet",
     tokenSuffix: "token.primitives.testnet",
-    amm: "jump_amm.testnet",
+    amm: "ref-finance-101.testnet",
     wrap: "wrap.testnet",
     poolFee: 30,
     factoryDepositYocto: "2234830000000000000000000",
-    ammStorageYocto: "100000000000000000000000",
+    ammStorageYocto: "250000000000000000000000",
     poolStorageYocto: "100000000000000000000000",
     ftStorageYocto: "1250000000000000000000",
     lpStorageYocto: "10000000000000000000000",
     explorerAccount: (id) => `https://testnet.nearblocks.io/address/${id}`,
     explorerTx: (hash) => `https://testnet.nearblocks.io/txns/${hash}`,
     jumpSwap: "https://www.jumpdefi.xyz/",
-    refPool: (poolId) => `https://testnet.ref.finance/pool/${poolId}`,
+    refPool: (poolId) => `https://testnet.nearblocks.io/address/ref-finance-101.testnet?tab=txns`,
   },
   mainnet: {
     factory: null,
@@ -55,7 +55,7 @@ export const CONTRACTS: Record<NetworkId, LaunchContracts> = {
     wrap: "wrap.near",
     poolFee: 30,
     factoryDepositYocto: "2234830000000000000000000",
-    ammStorageYocto: "100000000000000000000000",
+    ammStorageYocto: "250000000000000000000000",
     poolStorageYocto: "100000000000000000000000",
     ftStorageYocto: "1250000000000000000000",
     lpStorageYocto: "10000000000000000000000",
@@ -103,6 +103,13 @@ export function nearToYocto(amount: string): string {
 export function estimateLaunchNear(liquidityNear: string): string {
   const liq = Number(liquidityNear);
   if (!Number.isFinite(liq) || liq <= 0) return "—";
-  const fixed = 2.23483 + 0.1 + 0.1 + 0.0125 + 0.01;
+  const fixed = 2.23483 + 0.25 + 0.1 + 0.0125 + 0.0125 + 0.01;
+  return (fixed + liq).toFixed(3);
+}
+
+export function estimatePoolNear(liquidityNear: string): string {
+  const liq = Number(liquidityNear);
+  if (!Number.isFinite(liq) || liq <= 0) return "—";
+  const fixed = 0.25 + 0.1 + 0.0125 + 0.0125 + 0.01;
   return (fixed + liq).toFixed(3);
 }

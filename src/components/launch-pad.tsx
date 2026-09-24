@@ -3,24 +3,27 @@
 import {
   CONTRACTS,
   LAUNCH_NETWORK,
+  estimatePoolNear,
   predictedTokenId,
   tokenIcon,
 } from "@/lib/launch/contracts";
 import { buildCreateTokenPlan } from "@/lib/launch/create-token";
 import { fileToTokenIcon } from "@/lib/launch/icon";
 import type { LaunchedToken } from "@/lib/launch/list-tokens";
+import { seedRefPool } from "@/lib/launch/seed-pool";
 import { useNearWallet } from "near-connect-hooks";
+import Link from "next/link";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
-type Step = "form" | "done";
+type Step = "form" | "seed" | "done";
 
-type CreatedToken = {
+type SeedTarget = {
   tokenId: string;
   name: string;
   symbol: string;
   supply: string;
+  icon: string | null;
   ownerId: string;
-  icon: string;
 };
 
 export function LaunchPad() {
@@ -32,10 +35,13 @@ export function LaunchPad() {
   const [supply, setSupply] = useState("1000000000");
   const [icon, setIcon] = useState<string | null>(null);
   const [iconBusy, setIconBusy] = useState(false);
+  const [liquidityNear, setLiquidityNear] = useState("1");
+  const [lpPercent, setLpPercent] = useState(80);
   const [step, setStep] = useState<Step>("form");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<CreatedToken | null>(null);
+  const [seedTarget, setSeedTarget] = useState<SeedTarget | null>(null);
+  const [poolId, setPoolId] = useState<number | null>(null);
   const [launched, setLaunched] = useState<LaunchedToken[]>([]);
   const [listBusy, setListBusy] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
@@ -46,6 +52,7 @@ export function LaunchPad() {
     () => icon ?? (symbol.trim() ? tokenIcon(symbol.trim().toLowerCase()) : null),
     [icon, symbol],
   );
+  const poolEstimate = useMemo(() => estimatePoolNear(liquidityNear), [liquidityNear]);
 
   async function loadLaunched(accountId: string) {
     setListBusy(true);
@@ -111,7 +118,7 @@ export function LaunchPad() {
         deposit: plan.deposit,
       });
 
-      setCreated({
+      setSeedTarget({
         tokenId: plan.tokenId,
         name: name.trim(),
         symbol: symbol.trim().toLowerCase(),
@@ -119,10 +126,37 @@ export function LaunchPad() {
         ownerId: wallet.signedAccountId,
         icon: plan.args.args.metadata.icon,
       });
-      setStep("done");
+      setPoolId(null);
+      setStep("seed");
       void loadLaunched(wallet.signedAccountId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Token create failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function seedPool() {
+    if (!wallet.signedAccountId) {
+      await wallet.signIn();
+      return;
+    }
+    if (!seedTarget) return;
+
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await seedRefPool(wallet, {
+        tokenId: seedTarget.tokenId,
+        supply: seedTarget.supply,
+        liquidityNear,
+        lpPercent,
+      });
+      setPoolId(result.poolId);
+      setStep("done");
+      void loadLaunched(wallet.signedAccountId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Pool seed failed");
     } finally {
       setBusy(false);
     }
@@ -135,13 +169,31 @@ export function LaunchPad() {
 
   function resetForm() {
     setStep("form");
-    setCreated(null);
+    setSeedTarget(null);
+    setPoolId(null);
     setError(null);
     setName("");
     setSymbol("");
     setSupply("1000000000");
     setIcon(null);
+    setLiquidityNear("1");
+    setLpPercent(80);
     if (iconInputRef.current) iconInputRef.current.value = "";
+  }
+
+  function startSeedFromList(token: LaunchedToken) {
+    if (!wallet.signedAccountId) return;
+    setSeedTarget({
+      tokenId: token.tokenId,
+      name: token.name,
+      symbol: token.symbol,
+      supply: token.balance.replace(/,/g, ""),
+      icon: token.icon,
+      ownerId: wallet.signedAccountId,
+    });
+    setPoolId(null);
+    setError(null);
+    setStep("seed");
   }
 
   async function onIconChange(event: ChangeEvent<HTMLInputElement>) {
@@ -179,14 +231,16 @@ export function LaunchPad() {
           Launch
         </h1>
         <p className="max-w-2xl text-base leading-7 text-muted">
-          Create a fixed-supply NEP-141 meme token on NEAR testnet. For fun, you
-          pay, we never hold keys. The whole supply is minted to your wallet.
+          Create a fixed-supply NEP-141 token, then seed a TOKEN / wNEAR pool on
+          Ref Finance ({contracts.amm}). Their testnet UI is often down — the
+          pool lives on-chain. You sign, we never hold keys.
         </p>
       </header>
 
-      <ol className="grid gap-3 sm:grid-cols-2">
-        <StepChip n={1} label="Create token" active={step === "form"} done={step === "done"} />
-        <StepChip n={2} label="Token created" active={step === "done"} done={false} />
+      <ol className="grid gap-3 sm:grid-cols-3">
+        <StepChip n={1} label="Create token" active={step === "form"} done={step !== "form"} />
+        <StepChip n={2} label="Seed Ref pool" active={step === "seed"} done={step === "done"} />
+        <StepChip n={3} label="Pool live" active={step === "done"} done={false} />
       </ol>
 
       {step === "form" ? (
@@ -274,7 +328,7 @@ export function LaunchPad() {
           <p className="mt-4 rounded-xl border border-line bg-background px-4 py-3 font-mono text-xs leading-6 text-muted">
             You will sign one wallet flow and spend about{" "}
             <span className="text-ok">2.23 Ⓝ</span> for the factory deposit plus
-            gas. Testnet only — the mainnet factory is not deployed.
+            gas. Pool seed is the next step and needs extra testnet NEAR.
           </p>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
@@ -293,55 +347,120 @@ export function LaunchPad() {
         </form>
       ) : null}
 
-      {step === "done" && created ? (
+      {step === "seed" && seedTarget ? (
         <section className="rounded-2xl border border-ok/40 bg-panel/90 p-6">
-          <p className="font-mono text-xs tracking-[0.24em] text-ok">TOKEN CREATED</p>
+          <p className="font-mono text-xs tracking-[0.24em] text-ok">SEED REF POOL</p>
           <div className="mt-3 flex items-center gap-4">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={created.icon}
-              alt=""
-              className="h-16 w-16 rounded-2xl border border-line bg-background object-cover"
-            />
-            <h2 className="text-2xl text-white">{created.name}</h2>
+            {seedTarget.icon ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={seedTarget.icon}
+                alt=""
+                className="h-16 w-16 rounded-2xl border border-line bg-background object-cover"
+              />
+            ) : null}
+            <div>
+              <h2 className="text-2xl text-white">{seedTarget.name}</h2>
+              <p className="mt-1 font-mono text-xs text-muted">{seedTarget.tokenId}</p>
+            </div>
           </div>
+          <p className="mt-4 max-w-2xl text-sm leading-6 text-muted">
+            Wrap NEAR, deposit both sides into {contracts.amm}, and add
+            liquidity. You will sign several wallet calls. Keep this tab open.
+            Ref&apos;s testnet site may not list the pool.
+          </p>
+
+          <div className="mt-5 grid gap-4 sm:grid-cols-2">
+            <Field label="NEAR to pair (min 1)">
+              <input
+                value={liquidityNear}
+                onChange={(event) => setLiquidityNear(event.target.value)}
+                inputMode="decimal"
+                className={inputClass}
+              />
+            </Field>
+            <label className="block">
+              <span className="mb-2 flex justify-between font-mono text-xs tracking-wide text-muted uppercase">
+                <span>Balance sent to the pool</span>
+                <span>{lpPercent}%</span>
+              </span>
+              <input
+                type="range"
+                min={10}
+                max={95}
+                value={lpPercent}
+                onChange={(event) => setLpPercent(Number(event.target.value))}
+                className="mt-3 w-full accent-ok"
+              />
+            </label>
+          </div>
+
+          <p className="mt-4 rounded-xl border border-line bg-background px-4 py-3 font-mono text-xs leading-6 text-muted">
+            About <span className="text-ok">{poolEstimate} Ⓝ</span> (storage plus
+            the {liquidityNear || "0"} Ⓝ you pair). Pair is{" "}
+            {seedTarget.symbol} / wNEAR at {contracts.poolFee / 100}% fee.
+          </p>
+
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={() => void seedPool()}
+              disabled={busy || Number(liquidityNear) < 1}
+              className="rounded-xl bg-ok px-5 py-3 text-sm font-semibold text-background disabled:opacity-50"
+            >
+              {busy ? "Seeding pool…" : "Seed Ref pool"}
+            </button>
+            <button
+              type="button"
+              onClick={resetForm}
+              disabled={busy}
+              className="rounded-xl border border-line px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              Skip
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {step === "done" && seedTarget && poolId !== null ? (
+        <section className="rounded-2xl border border-ok/40 bg-panel/90 p-6">
+          <p className="font-mono text-xs tracking-[0.24em] text-ok">POOL LIVE</p>
+          <h2 className="mt-2 text-2xl text-white">Pool #{poolId} is seeded</h2>
           <ul className="mt-5 space-y-2 font-mono text-sm text-muted">
             <li>
               Token:{" "}
-              <a className="text-ok underline" href={contracts.explorerAccount(created.tokenId)}>
-                {created.tokenId}
+              <a className="text-ok underline" href={contracts.explorerAccount(seedTarget.tokenId)}>
+                {seedTarget.tokenId}
               </a>
             </li>
             <li>
-              Symbol: <span className="text-white">{created.symbol}</span>
+              Pair: <span className="text-white">{seedTarget.symbol} / wNEAR</span>
             </li>
             <li>
-              Supply: <span className="text-white">{created.supply}</span>{" "}
-              <span className="text-muted">(18 decimals)</span>
-            </li>
-            <li>
-              Owner:{" "}
-              <a className="text-ok underline" href={contracts.explorerAccount(created.ownerId)}>
-                {created.ownerId}
+              AMM:{" "}
+              <a className="text-ok underline" href={contracts.explorerAccount(contracts.amm)}>
+                {contracts.amm}
               </a>
             </li>
             <li>
-              Factory:{" "}
-              <a
-                className="text-ok underline"
-                href={contracts.explorerAccount(contracts.factory ?? "")}
-              >
-                {contracts.factory}
-              </a>
+              Pool id: <span className="text-white">{poolId}</span>
             </li>
           </ul>
-          <button
-            type="button"
-            onClick={resetForm}
-            className="mt-5 rounded-xl border border-line px-5 py-3 text-sm font-semibold text-white"
-          >
-            Create another
-          </button>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <Link
+              href={`/swap?token=${seedTarget.tokenId}&pool=${poolId}`}
+              className="rounded-xl bg-ok px-5 py-3 text-sm font-semibold text-background"
+            >
+              Swap {seedTarget.symbol}
+            </Link>
+            <button
+              type="button"
+              onClick={resetForm}
+              className="rounded-xl border border-line px-5 py-3 text-sm font-semibold text-white"
+            >
+              Launch another
+            </button>
+          </div>
         </section>
       ) : null}
 
@@ -351,6 +470,7 @@ export function LaunchPad() {
         busy={listBusy}
         error={listError}
         explorerAccount={contracts.explorerAccount}
+        onSeed={startSeedFromList}
       />
 
       {error ? (
@@ -382,12 +502,14 @@ function LaunchedList({
   busy,
   error,
   explorerAccount,
+  onSeed,
 }: {
   accountId: string | null;
   tokens: LaunchedToken[];
   busy: boolean;
   error: string | null;
   explorerAccount: (accountId: string) => string;
+  onSeed: (token: LaunchedToken) => void;
 }) {
   return (
     <section className="rounded-2xl border border-line bg-panel/80 p-5 sm:p-6">
@@ -403,10 +525,13 @@ function LaunchedList({
       ) : (
         <ul className="mt-4 space-y-3">
           {tokens.map((token) => (
-            <li key={token.tokenId}>
+            <li
+              key={token.tokenId}
+              className="flex items-center gap-4 rounded-xl border border-line bg-background px-4 py-3"
+            >
               <a
                 href={explorerAccount(token.tokenId)}
-                className="flex items-center gap-4 rounded-xl border border-line bg-background px-4 py-3 hover:border-ok/40"
+                className="flex min-w-0 flex-1 items-center gap-4"
               >
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line">
                   {token.icon ? (
@@ -420,11 +545,24 @@ function LaunchedList({
                   <p className="truncate text-sm text-white">{token.name}</p>
                   <p className="truncate font-mono text-[11px] text-muted">{token.tokenId}</p>
                 </div>
-                <div className="text-right font-mono text-[11px] text-muted">
+                <div className="hidden text-right font-mono text-[11px] text-muted sm:block">
                   <p className="text-white">{token.symbol}</p>
                   <p>{token.balance}</p>
                 </div>
               </a>
+              <Link
+                href={`/swap?token=${token.tokenId}`}
+                className="shrink-0 rounded-lg border border-line px-3 py-2 font-mono text-[11px] text-white uppercase hover:border-ok/40"
+              >
+                Swap
+              </Link>
+              <button
+                type="button"
+                onClick={() => onSeed(token)}
+                className="shrink-0 rounded-lg border border-line px-3 py-2 font-mono text-[11px] text-white uppercase hover:border-ok/40"
+              >
+                Seed pool
+              </button>
             </li>
           ))}
         </ul>
