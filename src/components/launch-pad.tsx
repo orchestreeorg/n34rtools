@@ -8,8 +8,9 @@ import {
 } from "@/lib/launch/contracts";
 import { buildCreateTokenPlan } from "@/lib/launch/create-token";
 import { fileToTokenIcon } from "@/lib/launch/icon";
+import type { LaunchedToken } from "@/lib/launch/list-tokens";
 import { useNearWallet } from "near-connect-hooks";
-import { ChangeEvent, FormEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Step = "form" | "done";
 
@@ -35,6 +36,9 @@ export function LaunchPad() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<CreatedToken | null>(null);
+  const [launched, setLaunched] = useState<LaunchedToken[]>([]);
+  const [listBusy, setListBusy] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const iconInputRef = useRef<HTMLInputElement>(null);
 
   const previewId = symbol.trim() ? predictedTokenId(symbol.trim().toLowerCase()) : "";
@@ -42,6 +46,35 @@ export function LaunchPad() {
     () => icon ?? (symbol.trim() ? tokenIcon(symbol.trim().toLowerCase()) : null),
     [icon, symbol],
   );
+
+  async function loadLaunched(accountId: string) {
+    setListBusy(true);
+    setListError(null);
+    try {
+      const response = await fetch(
+        `/api/launch/tokens?accountId=${encodeURIComponent(accountId)}`,
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Could not load tokens");
+      }
+      setLaunched(Array.isArray(payload.tokens) ? payload.tokens : []);
+    } catch (err) {
+      setLaunched([]);
+      setListError(err instanceof Error ? err.message : "Could not load tokens");
+    } finally {
+      setListBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!wallet.signedAccountId) {
+      setLaunched([]);
+      setListError(null);
+      return;
+    }
+    void loadLaunched(wallet.signedAccountId);
+  }, [wallet.signedAccountId]);
 
   async function createToken() {
     if (!wallet.signedAccountId) {
@@ -87,6 +120,7 @@ export function LaunchPad() {
         icon: plan.args.args.metadata.icon,
       });
       setStep("done");
+      void loadLaunched(wallet.signedAccountId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Token create failed");
     } finally {
@@ -311,6 +345,14 @@ export function LaunchPad() {
         </section>
       ) : null}
 
+      <LaunchedList
+        accountId={wallet.signedAccountId}
+        tokens={launched}
+        busy={listBusy}
+        error={listError}
+        explorerAccount={contracts.explorerAccount}
+      />
+
       {error ? (
         <p className="rounded-xl border border-block/40 bg-block/10 px-4 py-3 text-sm text-block">
           {error}
@@ -331,6 +373,63 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       </span>
       {children}
     </label>
+  );
+}
+
+function LaunchedList({
+  accountId,
+  tokens,
+  busy,
+  error,
+  explorerAccount,
+}: {
+  accountId: string | null;
+  tokens: LaunchedToken[];
+  busy: boolean;
+  error: string | null;
+  explorerAccount: (accountId: string) => string;
+}) {
+  return (
+    <section className="rounded-2xl border border-line bg-panel/80 p-5 sm:p-6">
+      <p className="font-mono text-xs tracking-[0.24em] text-ok">YOUR TOKENS</p>
+      {!accountId ? (
+        <p className="mt-3 text-sm text-muted">Connect to see tokens you launched.</p>
+      ) : busy ? (
+        <p className="mt-3 text-sm text-muted">Loading…</p>
+      ) : error ? (
+        <p className="mt-3 text-sm text-block">{error}</p>
+      ) : tokens.length === 0 ? (
+        <p className="mt-3 text-sm text-muted">No factory tokens yet for {accountId}.</p>
+      ) : (
+        <ul className="mt-4 space-y-3">
+          {tokens.map((token) => (
+            <li key={token.tokenId}>
+              <a
+                href={explorerAccount(token.tokenId)}
+                className="flex items-center gap-4 rounded-xl border border-line bg-background px-4 py-3 hover:border-ok/40"
+              >
+                <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line">
+                  {token.icon ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={token.icon} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <span className="font-mono text-[10px] text-muted">FT</span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-white">{token.name}</p>
+                  <p className="truncate font-mono text-[11px] text-muted">{token.tokenId}</p>
+                </div>
+                <div className="text-right font-mono text-[11px] text-muted">
+                  <p className="text-white">{token.symbol}</p>
+                  <p>{token.balance}</p>
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
