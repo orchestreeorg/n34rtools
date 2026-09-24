@@ -29,6 +29,9 @@ export function SiteHeader() {
             <NavLink href="/launch" active={pathname === "/launch"}>
               Launch
             </NavLink>
+            <NavLink href="/swap" active={pathname === "/swap"}>
+              Swap
+            </NavLink>
           </nav>
           <nav className="flex items-center gap-3 sm:hidden">
             <NavLink href="/" active={pathname === "/"}>
@@ -36,6 +39,9 @@ export function SiteHeader() {
             </NavLink>
             <NavLink href="/launch" active={pathname === "/launch"}>
               Launch
+            </NavLink>
+            <NavLink href="/swap" active={pathname === "/swap"}>
+              Swap
             </NavLink>
           </nav>
         </div>

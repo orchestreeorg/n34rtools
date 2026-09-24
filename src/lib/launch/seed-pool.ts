@@ -43,6 +43,10 @@ function asNumber(value: unknown): number {
   return Number(value);
 }
 
+function cleanAmount(value: string): string {
+  return value.replace(/,/g, "").trim();
+}
+
 async function isRegistered(
   wallet: WalletCaller,
   contractId: string,
@@ -64,16 +68,16 @@ export function splitLiquidity(input: SeedPoolInput): {
   tokenAmount: string;
   wrapAmount: string;
 } {
-  const total = BigInt(humanToTokenUnits(input.supply, 18));
+  const total = BigInt(humanToTokenUnits(cleanAmount(input.supply), 18));
   const percent = Math.min(95, Math.max(10, input.lpPercent));
   const tokenAmount = (total * BigInt(percent)) / 100n;
   if (tokenAmount <= 0n) throw new Error("LP token amount is too small.");
-  const wrapAmount = nearToYocto(input.liquidityNear);
+  const wrapAmount = nearToYocto(cleanAmount(input.liquidityNear));
   if (BigInt(wrapAmount) <= 0n) throw new Error("NEAR liquidity must be greater than 0.");
   return { tokenAmount: tokenAmount.toString(), wrapAmount };
 }
 
-export async function seedJumpPool(
+export async function seedRefPool(
   wallet: WalletCaller,
   input: SeedPoolInput,
 ): Promise<SeedPoolResult> {
@@ -92,6 +96,13 @@ export async function seedJumpPool(
     });
   }
 
+  const before = asNumber(
+    await wallet.viewFunction({
+      contractId: amm,
+      method: "get_number_of_pools",
+    }),
+  );
+
   const poolIdRaw = await wallet.callFunction({
     contractId: amm,
     method: "add_simple_pool",
@@ -99,24 +110,47 @@ export async function seedJumpPool(
     deposit: contracts.poolStorageYocto,
     gas: "100000000000000",
   });
-  const poolId = asNumber(poolIdRaw);
+  let poolId = asNumber(poolIdRaw);
+  if (!Number.isFinite(poolId)) {
+    const after = asNumber(
+      await wallet.viewFunction({
+        contractId: amm,
+        method: "get_number_of_pools",
+      }),
+    );
+    poolId = Number.isFinite(after) && after > 0 ? after - 1 : before;
+  }
   if (!Number.isFinite(poolId)) {
     throw new Error("Pool was created but the pool id could not be read.");
   }
 
-  await wallet.callFunction({
-    contractId: amm,
-    method: "register_tokens",
-    args: { token_ids: [input.tokenId, wrap] },
-    deposit: "1",
-    gas: "30000000000000",
-  });
+  try {
+    await wallet.callFunction({
+      contractId: amm,
+      method: "register_tokens",
+      args: { token_ids: [input.tokenId, wrap] },
+      deposit: "1",
+      gas: "30000000000000",
+    });
+  } catch {
+    // Already registered on this inner account.
+  }
 
   if (!(await isRegistered(wallet, wrap, user))) {
     await wallet.callFunction({
       contractId: wrap,
       method: "storage_deposit",
       args: { account_id: user, registration_only: false },
+      deposit: contracts.ftStorageYocto,
+      gas: "30000000000000",
+    });
+  }
+
+  if (!(await isRegistered(wallet, wrap, amm))) {
+    await wallet.callFunction({
+      contractId: wrap,
+      method: "storage_deposit",
+      args: { account_id: amm, registration_only: false },
       deposit: contracts.ftStorageYocto,
       gas: "30000000000000",
     });
@@ -166,3 +200,5 @@ export async function seedJumpPool(
 
   return { poolId, tokenAmount, wrapAmount };
 }
+
+export const seedJumpPool = seedRefPool;
