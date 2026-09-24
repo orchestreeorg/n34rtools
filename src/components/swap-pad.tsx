@@ -1,6 +1,13 @@
 "use client";
 
+import { PriceChart } from "@/components/price-chart";
 import { CONTRACTS, LAUNCH_NETWORK } from "@/lib/launch/contracts";
+import {
+  parseNearPrice,
+  readPriceHistory,
+  recordPrice,
+  type PricePoint,
+} from "@/lib/launch/price-history";
 import type { PoolView, SwapQuote } from "@/lib/launch/pool";
 import { executeRefSwap } from "@/lib/launch/swap";
 import { useNearWallet } from "near-connect-hooks";
@@ -24,18 +31,25 @@ export function SwapPad() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txNote, setTxNote] = useState<string | null>(null);
+  const [history, setHistory] = useState<PricePoint[]>([]);
 
-  async function loadPool(id: string, hint = poolHint) {
-    setPoolBusy(true);
+  async function loadPool(id: string, hint = poolHint, silent = false) {
+    if (!silent) {
+      setPoolBusy(true);
+      setQuote(null);
+    }
     setPoolError(null);
-    setQuote(null);
     try {
       const search = new URLSearchParams({ tokenId: id });
       if (hint) search.set("poolId", hint);
       const response = await fetch(`/api/launch/pool?${search}`);
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Pool not found");
-      setPool(payload as PoolView);
+      const next = payload as PoolView;
+      setPool(next);
+      const price = parseNearPrice(next.priceNearPerToken);
+      if (price) setHistory(recordPrice(next.tokenId, price));
+      else setHistory(readPriceHistory(next.tokenId));
     } catch (err) {
       setPool(null);
       setPoolError(err instanceof Error ? err.message : "Pool not found");
@@ -78,6 +92,15 @@ export function SwapPad() {
     }, 250);
     return () => window.clearTimeout(handle);
   }, [amount, side, pool]);
+
+  useEffect(() => {
+    if (!pool) return;
+    const tick = window.setInterval(() => {
+      void loadPool(pool.tokenId, String(pool.poolId), true);
+    }, 20_000);
+    return () => window.clearInterval(tick);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pool?.tokenId, pool?.poolId]);
 
   async function onLoad(event: FormEvent) {
     event.preventDefault();
@@ -168,6 +191,13 @@ export function SwapPad() {
             <Stat label={`${pool.symbol} reserve`} value={pool.tokenReserve} />
             <Stat label="wNEAR reserve" value={`${pool.nearReserve} Ⓝ`} />
           </dl>
+          <div className="mt-5 rounded-xl border border-line bg-background px-3 py-3 sm:px-4">
+            <PriceChart symbol={pool.symbol} points={history} />
+            <p className="mt-2 font-mono text-[10px] text-muted">
+              Charted in this browser from pool mid price. Ref&apos;s testnet
+              indexer is down, so we sample on load, every 20s, and after swaps.
+            </p>
+          </div>
         </section>
       ) : null}
 
