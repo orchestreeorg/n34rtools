@@ -1,8 +1,21 @@
 import type { NetworkId } from "@/lib/near/types";
 
+const RPC_DEFAULTS: Record<NetworkId, string> = {
+  mainnet: "https://free.rpc.fastnear.com",
+  testnet: "https://test.rpc.fastnear.com",
+};
+
+function rpcUrl(network: NetworkId, fromEnv: string | undefined): string {
+  const trimmed = fromEnv?.trim();
+  if (trimmed && /^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/\/$/, "");
+  }
+  return RPC_DEFAULTS[network];
+}
+
 export const RPC_URLS: Record<NetworkId, string> = {
-  mainnet: process.env.NEAR_RPC_MAINNET ?? "https://free.rpc.fastnear.com",
-  testnet: process.env.NEAR_RPC_TESTNET ?? "https://test.rpc.fastnear.com",
+  mainnet: rpcUrl("mainnet", process.env.NEAR_RPC_MAINNET),
+  testnet: rpcUrl("testnet", process.env.NEAR_RPC_TESTNET),
 };
 
 type RpcError = {

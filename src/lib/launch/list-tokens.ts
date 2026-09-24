@@ -3,10 +3,22 @@ import type { NetworkId } from "@/lib/near/types";
 import { viewFunction } from "@/lib/rpc/near";
 import { CONTRACTS, LAUNCH_NETWORK, tokenUnitsToHuman } from "./contracts";
 
-const FASTNEAR_API: Record<NetworkId, string> = {
-  mainnet: process.env.FASTNEAR_API_MAINNET ?? "https://api.fastnear.com",
-  testnet: process.env.FASTNEAR_API_TESTNET ?? "https://test.api.fastnear.com",
+const FASTNEAR_API_DEFAULTS: Record<NetworkId, string> = {
+  mainnet: "https://api.fastnear.com",
+  testnet: "https://test.api.fastnear.com",
 };
+
+function fastNearApiUrl(network: NetworkId): string {
+  const fromEnv =
+    network === "testnet"
+      ? process.env.FASTNEAR_API_TESTNET
+      : process.env.FASTNEAR_API_MAINNET;
+  const trimmed = fromEnv?.trim();
+  if (trimmed && /^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/\/$/, "");
+  }
+  return FASTNEAR_API_DEFAULTS[network];
+}
 
 type FastNearFt = {
   contract_id?: string;
@@ -37,7 +49,8 @@ export async function listLaunchedTokens(accountId: string): Promise<LaunchedTok
   }
 
   const suffix = `.${CONTRACTS[LAUNCH_NETWORK].tokenSuffix}`;
-  const response = await fetch(`${FASTNEAR_API[LAUNCH_NETWORK]}/v1/account/${owner}/ft`, {
+  const url = `${fastNearApiUrl(LAUNCH_NETWORK)}/v1/account/${owner}/ft`;
+  const response = await fetch(url, {
     cache: "no-store",
   });
   if (!response.ok) {
