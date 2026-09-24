@@ -85,6 +85,17 @@ export function humanToTokenUnits(amount: string, decimals = 18): string {
   return raw;
 }
 
+export function tokenUnitsToHuman(raw: string, decimals = 18): string {
+  const value = BigInt(raw || "0");
+  const base = 10n ** BigInt(decimals);
+  const whole = value / base;
+  const frac = value % base;
+  const wholeStr = whole.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+  if (frac === 0n) return wholeStr;
+  const fracStr = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  return `${wholeStr}.${fracStr}`;
+}
+
 export function nearToYocto(amount: string): string {
   return humanToTokenUnits(amount, 24);
 }
